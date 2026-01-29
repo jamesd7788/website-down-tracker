@@ -4,6 +4,7 @@ import * as crypto from "node:crypto";
 import { db } from "@/db";
 import { sites, checks } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { detectAnomalies } from "@/lib/anomaly-detector";
 
 const CHECK_TIMEOUT_MS = 10_000;
 
@@ -138,10 +139,16 @@ export async function runChecks(): Promise<number> {
   const results = await Promise.allSettled(
     activeSites.map(async (site) => {
       const result = await performCheck(site.url);
-      await db.insert(checks).values({
-        siteId: site.id,
-        ...result,
-      });
+      const [inserted] = await db
+        .insert(checks)
+        .values({
+          siteId: site.id,
+          ...result,
+        })
+        .returning({ id: checks.id });
+
+      await detectAnomalies(inserted.id, site.id);
+
       return result;
     })
   );
