@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { sites, checks, anomalies } from "@/db/schema";
+import { sites, checks, anomalies, siteSettings } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { notifyAnomaly } from "@/lib/slack-notifier";
 
@@ -22,8 +22,8 @@ interface AnomalyRecord {
 }
 
 const ROLLING_AVERAGE_WINDOW = 10;
-const SLOW_RESPONSE_MULTIPLIER = 2;
-const SSL_EXPIRY_WARNING_DAYS = 7;
+const DEFAULT_SLOW_RESPONSE_MULTIPLIER = 2;
+const DEFAULT_SSL_EXPIRY_WARNING_DAYS = 7;
 
 const SECURITY_HEADERS = [
   "strict-transport-security",
@@ -68,6 +68,16 @@ export async function detectAnomalies(
 
   if (!site) return;
 
+  // fetch per-site threshold overrides
+  const [overrides] = await db
+    .select()
+    .from(siteSettings)
+    .where(eq(siteSettings.siteId, siteId))
+    .limit(1);
+
+  const sslExpiryWarningDays =
+    overrides?.sslExpiryWarningDays ?? DEFAULT_SSL_EXPIRY_WARNING_DAYS;
+
   const detected: AnomalyRecord[] = [];
 
   // 1. downtime: site unreachable or 5xx
@@ -93,26 +103,43 @@ export async function detectAnomalies(
     }
   }
 
-  // 2. slow response: response time > 2x rolling average
-  if (current.responseTimeMs !== null && history.length > 0) {
-    const historicalTimes = history
-      .map((c) => c.responseTimeMs)
-      .filter((t): t is number => t !== null);
-
-    if (historicalTimes.length > 0) {
-      const avg =
-        historicalTimes.reduce((sum, t) => sum + t, 0) /
-        historicalTimes.length;
-      const threshold = avg * SLOW_RESPONSE_MULTIPLIER;
-
-      if (current.responseTimeMs > threshold) {
+  // 2. slow response: per-site absolute threshold or 2x rolling average
+  if (current.responseTimeMs !== null) {
+    if (overrides?.responseTimeThreshold != null) {
+      // absolute threshold override
+      if (current.responseTimeMs > overrides.responseTimeThreshold) {
         detected.push({
           checkId,
           siteId,
           type: "slow_response",
-          description: `response time ${current.responseTimeMs}ms exceeds 2x rolling average (${Math.round(avg)}ms)`,
-          severity: current.responseTimeMs > avg * 4 ? "high" : "medium",
+          description: `response time ${current.responseTimeMs}ms exceeds threshold (${overrides.responseTimeThreshold}ms)`,
+          severity:
+            current.responseTimeMs > overrides.responseTimeThreshold * 2
+              ? "high"
+              : "medium",
         });
+      }
+    } else if (history.length > 0) {
+      // default: 2x rolling average
+      const historicalTimes = history
+        .map((c) => c.responseTimeMs)
+        .filter((t): t is number => t !== null);
+
+      if (historicalTimes.length > 0) {
+        const avg =
+          historicalTimes.reduce((sum, t) => sum + t, 0) /
+          historicalTimes.length;
+        const threshold = avg * DEFAULT_SLOW_RESPONSE_MULTIPLIER;
+
+        if (current.responseTimeMs > threshold) {
+          detected.push({
+            checkId,
+            siteId,
+            type: "slow_response",
+            description: `response time ${current.responseTimeMs}ms exceeds 2x rolling average (${Math.round(avg)}ms)`,
+            severity: current.responseTimeMs > avg * 4 ? "high" : "medium",
+          });
+        }
       }
     }
   }
@@ -164,15 +191,6 @@ export async function detectAnomalies(
         description: "ssl certificate is invalid",
         severity: "critical",
       });
-    } else if (current.sslValid === null && current.statusCode !== null) {
-      // got a response but no ssl info on an https site
-      detected.push({
-        checkId,
-        siteId,
-        type: "ssl_issue",
-        description: "ssl certificate information missing",
-        severity: "high",
-      });
     }
 
     if (current.sslExpiry !== null) {
@@ -187,7 +205,7 @@ export async function detectAnomalies(
           description: `ssl certificate expired ${Math.abs(daysUntilExpiry)} days ago`,
           severity: "critical",
         });
-      } else if (daysUntilExpiry <= SSL_EXPIRY_WARNING_DAYS) {
+      } else if (daysUntilExpiry <= sslExpiryWarningDays) {
         detected.push({
           checkId,
           siteId,

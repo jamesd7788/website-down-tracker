@@ -44,7 +44,9 @@ function performCheck(url: string): Promise<Omit<CheckResult, "siteId">> {
               const cert = sock.getPeerCertificate();
               if (cert && cert.valid_to) {
                 sslExpiry = new Date(cert.valid_to);
-                sslValid = sock.authorized ?? null;
+                // sock.authorized can be undefined even on valid tls connections;
+                // if we completed the handshake and got a response, treat as valid
+                sslValid = sock.authorized !== false;
               }
             }
           } catch {

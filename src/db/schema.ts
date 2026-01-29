@@ -44,6 +44,21 @@ export const settings = sqliteTable("settings", {
   value: text("value").notNull(),
 });
 
+export const siteSettings = sqliteTable("site_settings", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  siteId: integer("site_id")
+    .notNull()
+    .unique()
+    .references(() => sites.id, { onDelete: "cascade" }),
+  responseTimeThreshold: integer("response_time_threshold"),
+  sslExpiryWarningDays: integer("ssl_expiry_warning_days"),
+  checkInterval: integer("check_interval"),
+  customName: text("custom_name"),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const anomalies = sqliteTable(
   "anomalies",
   {
