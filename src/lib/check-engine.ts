@@ -14,10 +14,12 @@ interface CheckResult {
   responseTimeMs: number | null;
   isUp: boolean;
   errorMessage: string | null;
+  errorCode: string | null;
   headersSnapshot: string | null;
   bodyHash: string | null;
   sslValid: boolean | null;
   sslExpiry: Date | null;
+  sslCertificate: string | null;
 }
 
 function performCheck(url: string): Promise<Omit<CheckResult, "siteId">> {
@@ -37,6 +39,7 @@ function performCheck(url: string): Promise<Omit<CheckResult, "siteId">> {
         // grab ssl info if available
         let sslValid: boolean | null = null;
         let sslExpiry: Date | null = null;
+        let sslCertificate: string | null = null;
         if (isHttps && "socket" in res && res.socket) {
           try {
             const sock = res.socket as import("tls").TLSSocket;
@@ -47,6 +50,14 @@ function performCheck(url: string): Promise<Omit<CheckResult, "siteId">> {
                 // sock.authorized can be undefined even on valid tls connections;
                 // if we completed the handshake and got a response, treat as valid
                 sslValid = sock.authorized !== false;
+                sslCertificate = JSON.stringify({
+                  issuer: cert.issuer,
+                  subject: cert.subject,
+                  valid_from: cert.valid_from,
+                  valid_to: cert.valid_to,
+                  serialNumber: cert.serialNumber,
+                  fingerprint: cert.fingerprint,
+                });
               }
             }
           } catch {
@@ -77,10 +88,12 @@ function performCheck(url: string): Promise<Omit<CheckResult, "siteId">> {
             responseTimeMs,
             isUp,
             errorMessage: null,
+            errorCode: null,
             headersSnapshot: JSON.stringify(headers),
             bodyHash,
             sslValid,
             sslExpiry,
+            sslCertificate,
           });
         });
 
@@ -90,10 +103,12 @@ function performCheck(url: string): Promise<Omit<CheckResult, "siteId">> {
             responseTimeMs: Date.now() - start,
             isUp: false,
             errorMessage: err.message,
+            errorCode: (err as NodeJS.ErrnoException).code ?? null,
             headersSnapshot: null,
             bodyHash: null,
             sslValid: null,
             sslExpiry: null,
+            sslCertificate: null,
           });
         });
       }
@@ -106,10 +121,12 @@ function performCheck(url: string): Promise<Omit<CheckResult, "siteId">> {
         responseTimeMs: Date.now() - start,
         isUp: false,
         errorMessage: `timeout after ${CHECK_TIMEOUT_MS}ms`,
+        errorCode: "ETIMEDOUT",
         headersSnapshot: null,
         bodyHash: null,
         sslValid: null,
         sslExpiry: null,
+        sslCertificate: null,
       });
     });
 
@@ -119,10 +136,12 @@ function performCheck(url: string): Promise<Omit<CheckResult, "siteId">> {
         responseTimeMs: Date.now() - start,
         isUp: false,
         errorMessage: err.message,
+        errorCode: (err as NodeJS.ErrnoException).code ?? null,
         headersSnapshot: null,
         bodyHash: null,
         sslValid: null,
         sslExpiry: null,
+        sslCertificate: null,
       });
     });
 

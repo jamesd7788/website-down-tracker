@@ -28,6 +28,8 @@ export const checks = sqliteTable(
     bodyHash: text("body_hash"),
     sslValid: integer("ssl_valid", { mode: "boolean" }),
     sslExpiry: integer("ssl_expiry", { mode: "timestamp" }),
+    sslCertificate: text("ssl_certificate"), // json: full cert object (issuer, subject, valid_from, valid_to, serialNumber, fingerprint)
+    errorCode: text("error_code"), // e.g. ECONNREFUSED, CERT_HAS_EXPIRED, ETIMEDOUT
     checkedAt: integer("checked_at", { mode: "timestamp" })
       .notNull()
       .$defaultFn(() => new Date()),
