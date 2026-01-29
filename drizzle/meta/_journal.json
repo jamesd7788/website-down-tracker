@@ -43,6 +43,13 @@
       "when": 1769703187273,
       "tag": "0005_outstanding_hiroim",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1769703557733,
+      "tag": "0006_dusty_wendigo",
+      "breakpoints": true
     }
   ]
 }

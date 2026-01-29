@@ -1,0 +1,1 @@
+ALTER TABLE `checks` ADD `redirect_chain` text;

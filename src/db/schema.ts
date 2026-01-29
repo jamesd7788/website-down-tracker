@@ -30,6 +30,7 @@ export const checks = sqliteTable(
     sslExpiry: integer("ssl_expiry", { mode: "timestamp" }),
     sslCertificate: text("ssl_certificate"), // json: full cert object (issuer, subject, valid_from, valid_to, serialNumber, fingerprint)
     errorCode: text("error_code"), // e.g. ECONNREFUSED, CERT_HAS_EXPIRED, ETIMEDOUT
+    redirectChain: text("redirect_chain"), // json: array of {url, statusCode} hops followed before final response
     checkedAt: integer("checked_at", { mode: "timestamp" })
       .notNull()
       .$defaultFn(() => new Date()),

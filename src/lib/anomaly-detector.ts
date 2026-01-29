@@ -203,7 +203,7 @@ export async function detectAnomalies(
     }
   }
 
-  // 3. unexpected status codes: 3xx or 4xx
+  // 3. unexpected status codes: 4xx (redirects are followed automatically by the check engine)
   if (current.statusCode !== null) {
     if (current.statusCode >= 400 && current.statusCode < 500) {
       detected.push({
@@ -214,14 +214,6 @@ export async function detectAnomalies(
         severity: current.statusCode === 401 || current.statusCode === 403
           ? "high"
           : "medium",
-      });
-    } else if (current.statusCode >= 300 && current.statusCode < 400) {
-      detected.push({
-        checkId,
-        siteId,
-        type: "status_code",
-        description: `redirect: HTTP ${current.statusCode}`,
-        severity: "low",
       });
     }
   }

@@ -45,6 +45,15 @@ export async function GET(_request: Request, { params }: RouteParams) {
     }
   }
 
+  let redirectChain: Array<{ url: string; statusCode: number }> | null = null;
+  if (check.redirectChain) {
+    try {
+      redirectChain = JSON.parse(check.redirectChain);
+    } catch {
+      redirectChain = null;
+    }
+  }
+
   return NextResponse.json({
     id: check.id,
     siteId: check.siteId,
@@ -58,6 +67,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
     sslExpiry: check.sslExpiry,
     sslCertificate,
     bodyHash: check.bodyHash,
+    redirectChain,
     checkedAt: check.checkedAt,
   });
 }

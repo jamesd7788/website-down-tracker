@@ -43,6 +43,7 @@ interface CheckDetailData {
     fingerprint?: string;
   } | null;
   bodyHash: string | null;
+  redirectChain: Array<{ url: string; statusCode: number }> | null;
   checkedAt: string;
 }
 
@@ -822,6 +823,32 @@ function CheckDetailModal({
                       {detail.errorMessage}
                     </p>
                   )}
+                </div>
+              )}
+
+              {/* redirect chain */}
+              {detail.redirectChain && detail.redirectChain.length > 0 && (
+                <div className={sectionClass}>
+                  <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+                    <p className="text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      redirect chain ({detail.redirectChain.length} hop{detail.redirectChain.length !== 1 ? "s" : ""})
+                    </p>
+                  </div>
+                  <div className="divide-y divide-zinc-100 dark:divide-zinc-800/50">
+                    {detail.redirectChain.map((hop, i) => (
+                      <div key={i} className="flex items-center gap-3 px-4 py-2">
+                        <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 font-mono text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                          {hop.statusCode}
+                        </span>
+                        <span className="min-w-0 truncate font-mono text-xs text-zinc-600 dark:text-zinc-400">
+                          {hop.url}
+                        </span>
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0 text-zinc-300 dark:text-zinc-600">
+                          <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
