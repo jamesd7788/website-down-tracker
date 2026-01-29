@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, use, type FormEvent } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, use, type FormEvent } from "react";
 import Link from "next/link";
 
 interface Check {
@@ -248,6 +248,32 @@ const SEVERITY_OPTIONS: SiteSettings["severityThreshold"][] = [
   "critical",
 ];
 
+// maps anomaly type → per-site settings toggle key
+const ANOMALY_TYPE_TO_NOTIFY_KEY: Record<string, keyof SiteSettings> = {
+  downtime: "notifyDowntime",
+  slow_response: "notifySlowResponse",
+  status_code: "notifyStatusCode",
+  content_change: "notifyContentChange",
+  ssl_issue: "notifySslIssue",
+  header_anomaly: "notifyHeaderAnomaly",
+};
+
+// maps anomaly type → global settings key
+const ANOMALY_TYPE_TO_GLOBAL_KEY: Record<string, string> = {
+  downtime: "global_notify_downtime",
+  slow_response: "global_notify_slow_response",
+  status_code: "global_notify_status_code",
+  content_change: "global_notify_content_change",
+  ssl_issue: "global_notify_ssl_issue",
+  header_anomaly: "global_notify_header_anomaly",
+};
+
+interface UndoToast {
+  message: string;
+  undoAction: () => Promise<void>;
+  timerId: ReturnType<typeof setTimeout>;
+}
+
 function SettingsPanel({ siteId }: { siteId: number }) {
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -265,28 +291,32 @@ function SettingsPanel({ siteId }: { siteId: number }) {
   >({});
   const [severityThreshold, setSeverityThreshold] =
     useState<SiteSettings["severityThreshold"]>("low");
+  const [globalSuppressions, setGlobalSuppressions] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    fetch(`/api/sites/${siteId}/settings`)
-      .then((r) => r.json())
-      .then((data: SiteSettings) => {
-        setSettings(data);
+    Promise.all([
+      fetch(`/api/sites/${siteId}/settings`).then((r) => r.json()),
+      fetch("/api/settings").then((r) => r.json()),
+    ])
+      .then(([siteData, globalData]: [SiteSettings, Record<string, string>]) => {
+        setSettings(siteData);
         setResponseTimeThreshold(
-          data.responseTimeThreshold != null
-            ? String(data.responseTimeThreshold)
+          siteData.responseTimeThreshold != null
+            ? String(siteData.responseTimeThreshold)
             : ""
         );
-        setSslExpiryWarningDays(String(data.sslExpiryWarningDays));
-        setCheckInterval(String(data.checkInterval));
+        setSslExpiryWarningDays(String(siteData.sslExpiryWarningDays));
+        setCheckInterval(String(siteData.checkInterval));
         setNotifyToggles({
-          notifyDowntime: data.notifyDowntime,
-          notifySlowResponse: data.notifySlowResponse,
-          notifyStatusCode: data.notifyStatusCode,
-          notifyContentChange: data.notifyContentChange,
-          notifySslIssue: data.notifySslIssue,
-          notifyHeaderAnomaly: data.notifyHeaderAnomaly,
+          notifyDowntime: siteData.notifyDowntime,
+          notifySlowResponse: siteData.notifySlowResponse,
+          notifyStatusCode: siteData.notifyStatusCode,
+          notifyContentChange: siteData.notifyContentChange,
+          notifySslIssue: siteData.notifySslIssue,
+          notifyHeaderAnomaly: siteData.notifyHeaderAnomaly,
         });
-        setSeverityThreshold(data.severityThreshold);
+        setSeverityThreshold(siteData.severityThreshold);
+        setGlobalSuppressions(globalData);
       })
       .catch(() => setMsg({ type: "err", text: "failed to load settings" }))
       .finally(() => setLoading(false));
@@ -357,6 +387,30 @@ function SettingsPanel({ siteId }: { siteId: number }) {
   const suppressed = NOTIFICATION_TYPES.filter(
     (nt) => notifyToggles[nt.key] === false
   );
+
+  // find globally suppressed types
+  const globallySuppressed = NOTIFICATION_TYPES.filter((nt) => {
+    const anomalyType = nt.key.replace("notify", "").replace(/([A-Z])/g, "_$1").toLowerCase().slice(1);
+    const globalKey = ANOMALY_TYPE_TO_GLOBAL_KEY[anomalyType];
+    return globalKey && globalSuppressions[globalKey] === "false";
+  });
+
+  async function reEnableGlobal(anomalyType: string) {
+    const globalKey = ANOMALY_TYPE_TO_GLOBAL_KEY[anomalyType];
+    if (!globalKey) return;
+    const res = await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [globalKey]: "true" }),
+    });
+    if (res.ok) {
+      setGlobalSuppressions((prev) => {
+        const next = { ...prev };
+        delete next[globalKey];
+        return next;
+      });
+    }
+  }
 
   return (
     <form onSubmit={handleSave} className="space-y-6">
@@ -533,6 +587,36 @@ function SettingsPanel({ siteId }: { siteId: number }) {
                   <span className="text-amber-500">+</span>
                 </button>
               ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* globally suppressed types */}
+      {globallySuppressed.length > 0 && (
+        <section className="rounded-lg border border-orange-200 bg-orange-50 dark:border-orange-900/50 dark:bg-orange-950/30">
+          <div className="px-4 py-3">
+            <h2 className="text-sm font-medium text-orange-800 dark:text-orange-400">
+              globally suppressed notifications
+            </h2>
+            <p className="mt-1 text-xs text-orange-600 dark:text-orange-500">
+              these types are suppressed across all sites. click to re-enable.
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {globallySuppressed.map((nt) => {
+                const anomalyType = nt.key.replace("notify", "").replace(/([A-Z])/g, "_$1").toLowerCase().slice(1);
+                return (
+                  <button
+                    key={nt.key}
+                    type="button"
+                    onClick={() => reEnableGlobal(anomalyType)}
+                    className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-800 transition-colors hover:bg-orange-200 dark:bg-orange-900/40 dark:text-orange-400 dark:hover:bg-orange-900/60"
+                  >
+                    {nt.label}
+                    <span className="text-orange-500">+</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </section>
@@ -842,6 +926,9 @@ export default function SiteDetailPage({
   const [period, setPeriod] = useState<Period>("24h");
   const [tab, setTab] = useState<Tab>("overview");
   const [selectedCheckId, setSelectedCheckId] = useState<number | null>(null);
+  const [suppressingAnomalyId, setSuppressingAnomalyId] = useState<number | null>(null);
+  const [undoToast, setUndoToast] = useState<UndoToast | null>(null);
+  const undoToastRef = useRef<UndoToast | null>(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- recompute timestamp when data refreshes
   const now = useMemo(() => Date.now(), [data]);
 
@@ -864,6 +951,89 @@ export default function SiteDetailPage({
     const interval = setInterval(fetchDetail, 30_000);
     return () => clearInterval(interval);
   }, [fetchDetail]);
+
+  // cleanup undo timer on unmount
+  useEffect(() => {
+    return () => {
+      if (undoToastRef.current?.timerId) {
+        clearTimeout(undoToastRef.current.timerId);
+      }
+    };
+  }, []);
+
+  async function handleSuppress(anomalyType: string, scope: "site" | "global") {
+    setSuppressingAnomalyId(null);
+
+    if (scope === "site") {
+      // update per-site settings to disable this notification type
+      const notifyKey = ANOMALY_TYPE_TO_NOTIFY_KEY[anomalyType];
+      if (!notifyKey) return;
+
+      const res = await fetch(`/api/sites/${params.id}/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [notifyKey]: false }),
+      });
+      if (!res.ok) return;
+
+      showUndoToast(
+        `${anomalyType.replace(/_/g, " ")} notifications suppressed for this site`,
+        async () => {
+          await fetch(`/api/sites/${params.id}/settings`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ [notifyKey]: true }),
+          });
+        }
+      );
+    } else {
+      // update global settings
+      const globalKey = ANOMALY_TYPE_TO_GLOBAL_KEY[anomalyType];
+      if (!globalKey) return;
+
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [globalKey]: "false" }),
+      });
+      if (!res.ok) return;
+
+      showUndoToast(
+        `${anomalyType.replace(/_/g, " ")} notifications suppressed globally`,
+        async () => {
+          await fetch("/api/settings", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ [globalKey]: "true" }),
+          });
+        }
+      );
+    }
+  }
+
+  function showUndoToast(message: string, undoAction: () => Promise<void>) {
+    // clear any existing toast timer
+    if (undoToastRef.current?.timerId) {
+      clearTimeout(undoToastRef.current.timerId);
+    }
+
+    const timerId = setTimeout(() => {
+      setUndoToast(null);
+      undoToastRef.current = null;
+    }, 30_000);
+
+    const toast: UndoToast = { message, undoAction, timerId };
+    undoToastRef.current = toast;
+    setUndoToast(toast);
+  }
+
+  async function handleUndo() {
+    if (!undoToast) return;
+    clearTimeout(undoToast.timerId);
+    await undoToast.undoAction();
+    setUndoToast(null);
+    undoToastRef.current = null;
+  }
 
   if (loading) {
     return (
@@ -1129,9 +1299,46 @@ export default function SiteDetailPage({
                       </p>
                     )}
                   </div>
-                  <span className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">
-                    {new Date(a.createdAt).toLocaleString()}
-                  </span>
+                  <div className="relative shrink-0 flex items-center gap-2">
+                    <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                      {new Date(a.createdAt).toLocaleString()}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSuppressingAnomalyId(
+                          suppressingAnomalyId === a.id ? null : a.id
+                        )
+                      }
+                      className="rounded px-1.5 py-0.5 text-xs text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                      title="Don't notify this type"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                        <path d="M13.5 4.5L12 3l-4 4-4-4L2.5 4.5l4 4-4 4L4 14l4-4 4 4 1.5-1.5-4-4 4-4z" fill="currentColor"/>
+                      </svg>
+                    </button>
+                    {suppressingAnomalyId === a.id && (
+                      <div className="absolute right-0 top-full z-10 mt-1 w-48 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
+                        <p className="px-3 py-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                          suppress {a.type.replace(/_/g, " ")}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => handleSuppress(a.type, "site")}
+                          className="w-full px-3 py-1.5 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                        >
+                          for this site only
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSuppress(a.type, "global")}
+                          className="w-full px-3 py-1.5 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                        >
+                          for all sites
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1147,6 +1354,37 @@ export default function SiteDetailPage({
           checkId={selectedCheckId}
           onClose={() => setSelectedCheckId(null)}
         />
+      )}
+
+      {/* undo toast */}
+      {undoToast && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2">
+          <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-3 shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
+            <p className="text-sm text-zinc-700 dark:text-zinc-300">
+              {undoToast.message}
+            </p>
+            <button
+              type="button"
+              onClick={handleUndo}
+              className="rounded px-2 py-1 text-sm font-medium text-emerald-600 transition-colors hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+            >
+              undo
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                clearTimeout(undoToast.timerId);
+                setUndoToast(null);
+                undoToastRef.current = null;
+              }}
+              className="text-zinc-400 transition-colors hover:text-zinc-700 dark:hover:text-zinc-300"
+            >
+              <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
+                <path d="M15 5L5 15M5 5l10 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

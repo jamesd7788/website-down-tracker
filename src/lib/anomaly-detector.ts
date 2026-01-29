@@ -1,6 +1,6 @@
 import { db } from "@/db";
-import { sites, checks, anomalies, siteSettings } from "@/db/schema";
-import { eq, desc, type InferSelectModel } from "drizzle-orm";
+import { sites, checks, anomalies, siteSettings, settings } from "@/db/schema";
+import { eq, desc, like, type InferSelectModel } from "drizzle-orm";
 import { notifyAnomaly } from "@/lib/slack-notifier";
 
 type SiteSettingsRow = InferSelectModel<typeof siteSettings>;
@@ -43,12 +43,26 @@ const NOTIFY_TYPE_FIELDS: Record<AnomalyType, string> = {
   header_anomaly: "notifyHeaderAnomaly",
 };
 
+const GLOBAL_NOTIFY_KEYS: Record<AnomalyType, string> = {
+  downtime: "global_notify_downtime",
+  slow_response: "global_notify_slow_response",
+  status_code: "global_notify_status_code",
+  content_change: "global_notify_content_change",
+  ssl_issue: "global_notify_ssl_issue",
+  header_anomaly: "global_notify_header_anomaly",
+};
+
 function shouldNotify(
   overrides: SiteSettingsRow | undefined,
   anomalyType: AnomalyType,
-  severity: Severity
+  severity: Severity,
+  globalSuppressions: Record<string, string>
 ): boolean {
-  if (!overrides) return true; // no prefs = notify everything
+  // check global suppression first
+  const globalKey = GLOBAL_NOTIFY_KEYS[anomalyType];
+  if (globalSuppressions[globalKey] === "false") return false;
+
+  if (!overrides) return true; // no per-site prefs = notify everything
 
   // check type toggle (null = default = enabled)
   const field = NOTIFY_TYPE_FIELDS[anomalyType] as keyof SiteSettingsRow;
@@ -303,10 +317,20 @@ export async function detectAnomalies(
   if (detected.length > 0) {
     await db.insert(anomalies).values(detected);
 
+    // fetch global notification suppressions
+    const globalRows = await db
+      .select()
+      .from(settings)
+      .where(like(settings.key, "global_notify_%"));
+    const globalSuppressions: Record<string, string> = {};
+    for (const row of globalRows) {
+      globalSuppressions[row.key] = row.value;
+    }
+
     // fire slack notifications (best-effort, never throws)
-    // respects per-site notification preferences: type toggle + severity floor
+    // respects global + per-site notification preferences: type toggle + severity floor
     for (const anomaly of detected) {
-      if (!shouldNotify(overrides, anomaly.type, anomaly.severity)) {
+      if (!shouldNotify(overrides, anomaly.type, anomaly.severity, globalSuppressions)) {
         continue;
       }
       notifyAnomaly({

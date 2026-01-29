@@ -4,10 +4,24 @@ import { db } from "@/db";
 import { settings } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
-const ALLOWED_KEYS = ["slack_webhook_url"] as const;
+const ALLOWED_KEYS = [
+  "slack_webhook_url",
+  "global_notify_downtime",
+  "global_notify_slow_response",
+  "global_notify_status_code",
+  "global_notify_content_change",
+  "global_notify_ssl_issue",
+  "global_notify_header_anomaly",
+] as const;
 
 const updateSettingsSchema = z.object({
   slack_webhook_url: z.union([z.url(), z.literal("")]).optional(),
+  global_notify_downtime: z.enum(["true", "false"]).optional(),
+  global_notify_slow_response: z.enum(["true", "false"]).optional(),
+  global_notify_status_code: z.enum(["true", "false"]).optional(),
+  global_notify_content_change: z.enum(["true", "false"]).optional(),
+  global_notify_ssl_issue: z.enum(["true", "false"]).optional(),
+  global_notify_header_anomaly: z.enum(["true", "false"]).optional(),
 });
 
 export async function GET() {
