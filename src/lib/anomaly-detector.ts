@@ -1,7 +1,9 @@
 import { db } from "@/db";
 import { sites, checks, anomalies, siteSettings } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, type InferSelectModel } from "drizzle-orm";
 import { notifyAnomaly } from "@/lib/slack-notifier";
+
+type SiteSettingsRow = InferSelectModel<typeof siteSettings>;
 
 type AnomalyType =
   | "downtime"
@@ -24,6 +26,39 @@ interface AnomalyRecord {
 const ROLLING_AVERAGE_WINDOW = 10;
 const DEFAULT_SLOW_RESPONSE_MULTIPLIER = 2;
 const DEFAULT_SSL_EXPIRY_WARNING_DAYS = 7;
+
+const SEVERITY_LEVELS: Record<Severity, number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+  critical: 3,
+};
+
+const NOTIFY_TYPE_FIELDS: Record<AnomalyType, string> = {
+  downtime: "notifyDowntime",
+  slow_response: "notifySlowResponse",
+  status_code: "notifyStatusCode",
+  content_change: "notifyContentChange",
+  ssl_issue: "notifySslIssue",
+  header_anomaly: "notifyHeaderAnomaly",
+};
+
+function shouldNotify(
+  overrides: SiteSettingsRow | undefined,
+  anomalyType: AnomalyType,
+  severity: Severity
+): boolean {
+  if (!overrides) return true; // no prefs = notify everything
+
+  // check type toggle (null = default = enabled)
+  const field = NOTIFY_TYPE_FIELDS[anomalyType] as keyof SiteSettingsRow;
+  const typeEnabled = overrides[field];
+  if (typeEnabled === false) return false;
+
+  // check severity floor (null = default = "low" = notify everything)
+  const threshold = (overrides.severityThreshold as Severity | null) ?? "low";
+  return SEVERITY_LEVELS[severity] >= SEVERITY_LEVELS[threshold];
+}
 
 const SECURITY_HEADERS = [
   "strict-transport-security",
@@ -269,7 +304,11 @@ export async function detectAnomalies(
     await db.insert(anomalies).values(detected);
 
     // fire slack notifications (best-effort, never throws)
+    // respects per-site notification preferences: type toggle + severity floor
     for (const anomaly of detected) {
+      if (!shouldNotify(overrides, anomaly.type, anomaly.severity)) {
+        continue;
+      }
       notifyAnomaly({
         siteName: site.name,
         siteUrl: site.url,

@@ -54,6 +54,17 @@ export const siteSettings = sqliteTable("site_settings", {
   sslExpiryWarningDays: integer("ssl_expiry_warning_days"),
   checkInterval: integer("check_interval"),
   customName: text("custom_name"),
+  // notification preferences: per-type toggles (1=enabled, 0=disabled, null=default/enabled)
+  notifyDowntime: integer("notify_downtime", { mode: "boolean" }),
+  notifySlowResponse: integer("notify_slow_response", { mode: "boolean" }),
+  notifyStatusCode: integer("notify_status_code", { mode: "boolean" }),
+  notifyContentChange: integer("notify_content_change", { mode: "boolean" }),
+  notifySslIssue: integer("notify_ssl_issue", { mode: "boolean" }),
+  notifyHeaderAnomaly: integer("notify_header_anomaly", { mode: "boolean" }),
+  // severity floor: only notify if severity >= this level
+  severityThreshold: text("severity_threshold", {
+    enum: ["low", "medium", "high", "critical"],
+  }),
   updatedAt: integer("updated_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),

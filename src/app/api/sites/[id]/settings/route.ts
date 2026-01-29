@@ -9,6 +9,13 @@ const DEFAULTS = {
   sslExpiryWarningDays: 7,
   checkInterval: 60,
   customName: null,
+  notifyDowntime: true,
+  notifySlowResponse: true,
+  notifyStatusCode: true,
+  notifyContentChange: true,
+  notifySslIssue: true,
+  notifyHeaderAnomaly: true,
+  severityThreshold: "low" as const,
 };
 
 const updateSettingsSchema = z.object({
@@ -16,6 +23,13 @@ const updateSettingsSchema = z.object({
   sslExpiryWarningDays: z.number().int().min(1).max(365).optional(),
   checkInterval: z.number().int().min(10).max(86400).optional(),
   customName: z.string().max(255).nullable().optional(),
+  notifyDowntime: z.boolean().optional(),
+  notifySlowResponse: z.boolean().optional(),
+  notifyStatusCode: z.boolean().optional(),
+  notifyContentChange: z.boolean().optional(),
+  notifySslIssue: z.boolean().optional(),
+  notifyHeaderAnomaly: z.boolean().optional(),
+  severityThreshold: z.enum(["low", "medium", "high", "critical"]).optional(),
 });
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -43,6 +57,13 @@ export async function GET(_request: Request, { params }: RouteParams) {
     sslExpiryWarningDays: existing?.sslExpiryWarningDays ?? DEFAULTS.sslExpiryWarningDays,
     checkInterval: existing?.checkInterval ?? DEFAULTS.checkInterval,
     customName: existing?.customName ?? DEFAULTS.customName,
+    notifyDowntime: existing?.notifyDowntime ?? DEFAULTS.notifyDowntime,
+    notifySlowResponse: existing?.notifySlowResponse ?? DEFAULTS.notifySlowResponse,
+    notifyStatusCode: existing?.notifyStatusCode ?? DEFAULTS.notifyStatusCode,
+    notifyContentChange: existing?.notifyContentChange ?? DEFAULTS.notifyContentChange,
+    notifySslIssue: existing?.notifySslIssue ?? DEFAULTS.notifySslIssue,
+    notifyHeaderAnomaly: existing?.notifyHeaderAnomaly ?? DEFAULTS.notifyHeaderAnomaly,
+    severityThreshold: existing?.severityThreshold ?? DEFAULTS.severityThreshold,
   });
 }
 
@@ -105,5 +126,12 @@ export async function PUT(request: Request, { params }: RouteParams) {
     sslExpiryWarningDays: result.sslExpiryWarningDays ?? DEFAULTS.sslExpiryWarningDays,
     checkInterval: result.checkInterval ?? DEFAULTS.checkInterval,
     customName: result.customName ?? DEFAULTS.customName,
+    notifyDowntime: result.notifyDowntime ?? DEFAULTS.notifyDowntime,
+    notifySlowResponse: result.notifySlowResponse ?? DEFAULTS.notifySlowResponse,
+    notifyStatusCode: result.notifyStatusCode ?? DEFAULTS.notifyStatusCode,
+    notifyContentChange: result.notifyContentChange ?? DEFAULTS.notifyContentChange,
+    notifySslIssue: result.notifySslIssue ?? DEFAULTS.notifySslIssue,
+    notifyHeaderAnomaly: result.notifyHeaderAnomaly ?? DEFAULTS.notifyHeaderAnomaly,
+    severityThreshold: result.severityThreshold ?? DEFAULTS.severityThreshold,
   });
 }
