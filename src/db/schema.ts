@@ -39,6 +39,11 @@ export const checks = sqliteTable(
   ]
 );
 
+export const settings = sqliteTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
+
 export const anomalies = sqliteTable(
   "anomalies",
   {

@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { sites, checks, anomalies } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
+import { notifyAnomaly } from "@/lib/slack-notifier";
 
 type AnomalyType =
   | "downtime"
@@ -57,6 +58,15 @@ export async function detectAnomalies(
 
   // filter out the current check from previous
   const history = previousChecks.filter((c) => c.id !== checkId);
+
+  // fetch site info (needed for ssl checks and notifications)
+  const [site] = await db
+    .select()
+    .from(sites)
+    .where(eq(sites.id, siteId))
+    .limit(1);
+
+  if (!site) return;
 
   const detected: AnomalyRecord[] = [];
 
@@ -145,13 +155,7 @@ export async function detectAnomalies(
   }
 
   // 5. ssl issues: invalid, expiring within 7 days, or missing on https site
-  const [site] = await db
-    .select()
-    .from(sites)
-    .where(eq(sites.id, siteId))
-    .limit(1);
-
-  if (site && site.url.startsWith("https://")) {
+  if (site.url.startsWith("https://")) {
     if (current.sslValid === false) {
       detected.push({
         checkId,
@@ -245,6 +249,21 @@ export async function detectAnomalies(
   // insert all detected anomalies
   if (detected.length > 0) {
     await db.insert(anomalies).values(detected);
+
+    // fire slack notifications (best-effort, never throws)
+    for (const anomaly of detected) {
+      notifyAnomaly({
+        siteName: site.name,
+        siteUrl: site.url,
+        anomalyType: anomaly.type,
+        description: anomaly.description,
+        severity: anomaly.severity,
+        timestamp: new Date(),
+        siteId: anomaly.siteId,
+      }).catch((err) => {
+        console.error("[slack-notifier] unexpected error:", err);
+      });
+    }
   }
 }
 
