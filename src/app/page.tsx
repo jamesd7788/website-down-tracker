@@ -171,6 +171,12 @@ export default function Dashboard() {
             >
               + Add Site
             </button>
+            <Link
+              href="/settings"
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            >
+              Settings
+            </Link>
             <form action="/api/auth/logout" method="POST">
               <button
                 type="submit"
