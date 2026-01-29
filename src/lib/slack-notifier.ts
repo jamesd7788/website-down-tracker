@@ -7,6 +7,32 @@ const RATE_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 // key: "siteId:anomalyType" -> last notification timestamp
 const rateLimitMap = new Map<string, number>();
 
+// key: siteId -> timestamp when continuous downtime started
+const downtimeStartMap = new Map<number, number>();
+
+const DEFAULT_ESCALATION_THRESHOLD_MINUTES = 5;
+
+export function recordDowntimeStart(siteId: number): void {
+  if (!downtimeStartMap.has(siteId)) {
+    downtimeStartMap.set(siteId, Date.now());
+  }
+}
+
+export function clearDowntime(siteId: number): void {
+  downtimeStartMap.delete(siteId);
+}
+
+export function isEscalated(
+  siteId: number,
+  thresholdMinutes: number | null
+): boolean {
+  const start = downtimeStartMap.get(siteId);
+  if (start == null) return false;
+  const threshold =
+    (thresholdMinutes ?? DEFAULT_ESCALATION_THRESHOLD_MINUTES) * 60 * 1000;
+  return Date.now() - start >= threshold;
+}
+
 interface AnomalyNotification {
   siteName: string;
   siteUrl: string;
@@ -15,6 +41,7 @@ interface AnomalyNotification {
   severity: string;
   timestamp: Date;
   siteId: number;
+  escalated?: boolean;
 }
 
 function isRateLimited(siteId: number, anomalyType: string): boolean {
@@ -60,13 +87,15 @@ export async function notifyAnomaly(
   }
 
   const emoji = severityEmoji(notification.severity);
+  const prefix = notification.escalated ? "ESCALATED: " : "";
+  const channelMention = notification.escalated ? "<!channel> " : "";
   const payload = {
     blocks: [
       {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `${emoji} *Anomaly Detected: ${notification.anomalyType}*`,
+          text: `${channelMention}${emoji} *${prefix}Anomaly Detected: ${notification.anomalyType}*`,
         },
       },
       {

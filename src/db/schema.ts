@@ -67,6 +67,8 @@ export const siteSettings = sqliteTable("site_settings", {
   severityThreshold: text("severity_threshold", {
     enum: ["low", "medium", "high", "critical"],
   }),
+  // escalation: minutes of continuous downtime before @channel mention (null = default 5)
+  escalationThreshold: integer("escalation_threshold"),
   updatedAt: integer("updated_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),

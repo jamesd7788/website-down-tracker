@@ -16,6 +16,7 @@ const DEFAULTS = {
   notifySslIssue: true,
   notifyHeaderAnomaly: true,
   severityThreshold: "low" as const,
+  escalationThreshold: 5,
 };
 
 const updateSettingsSchema = z.object({
@@ -30,6 +31,7 @@ const updateSettingsSchema = z.object({
   notifySslIssue: z.boolean().optional(),
   notifyHeaderAnomaly: z.boolean().optional(),
   severityThreshold: z.enum(["low", "medium", "high", "critical"]).optional(),
+  escalationThreshold: z.number().int().min(1).max(1440).nullable().optional(),
 });
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -64,6 +66,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
     notifySslIssue: existing?.notifySslIssue ?? DEFAULTS.notifySslIssue,
     notifyHeaderAnomaly: existing?.notifyHeaderAnomaly ?? DEFAULTS.notifyHeaderAnomaly,
     severityThreshold: existing?.severityThreshold ?? DEFAULTS.severityThreshold,
+    escalationThreshold: existing?.escalationThreshold ?? DEFAULTS.escalationThreshold,
   });
 }
 
@@ -133,5 +136,6 @@ export async function PUT(request: Request, { params }: RouteParams) {
     notifySslIssue: result.notifySslIssue ?? DEFAULTS.notifySslIssue,
     notifyHeaderAnomaly: result.notifyHeaderAnomaly ?? DEFAULTS.notifyHeaderAnomaly,
     severityThreshold: result.severityThreshold ?? DEFAULTS.severityThreshold,
+    escalationThreshold: result.escalationThreshold ?? DEFAULTS.escalationThreshold,
   });
 }

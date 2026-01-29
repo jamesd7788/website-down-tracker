@@ -1,7 +1,12 @@
 import { db } from "@/db";
 import { sites, checks, anomalies, siteSettings, settings } from "@/db/schema";
 import { eq, desc, like, type InferSelectModel } from "drizzle-orm";
-import { notifyAnomaly } from "@/lib/slack-notifier";
+import {
+  notifyAnomaly,
+  recordDowntimeStart,
+  clearDowntime,
+  isEscalated,
+} from "@/lib/slack-notifier";
 
 type SiteSettingsRow = InferSelectModel<typeof siteSettings>;
 
@@ -128,6 +133,11 @@ export async function detectAnomalies(
     overrides?.sslExpiryWarningDays ?? DEFAULT_SSL_EXPIRY_WARNING_DAYS;
 
   const detected: AnomalyRecord[] = [];
+
+  // escalation: clear downtime tracking when site is back up
+  if (current.isUp) {
+    clearDowntime(siteId);
+  }
 
   // 1. downtime: site unreachable or 5xx
   if (!current.isUp) {
@@ -327,12 +337,23 @@ export async function detectAnomalies(
       globalSuppressions[row.key] = row.value;
     }
 
+    // track downtime start for escalation
+    const hasDowntime = detected.some((a) => a.type === "downtime");
+    if (hasDowntime) {
+      recordDowntimeStart(siteId);
+    }
+
+    const escalationThresholdMinutes = overrides?.escalationThreshold ?? null;
+
     // fire slack notifications (best-effort, never throws)
     // respects global + per-site notification preferences: type toggle + severity floor
     for (const anomaly of detected) {
       if (!shouldNotify(overrides, anomaly.type, anomaly.severity, globalSuppressions)) {
         continue;
       }
+      const escalated =
+        anomaly.type === "downtime" &&
+        isEscalated(siteId, escalationThresholdMinutes);
       notifyAnomaly({
         siteName: site.name,
         siteUrl: site.url,
@@ -341,6 +362,7 @@ export async function detectAnomalies(
         severity: anomaly.severity,
         timestamp: new Date(),
         siteId: anomaly.siteId,
+        escalated,
       }).catch((err) => {
         console.error("[slack-notifier] unexpected error:", err);
       });

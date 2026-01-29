@@ -97,6 +97,7 @@ interface SiteSettings {
   notifySslIssue: boolean;
   notifyHeaderAnomaly: boolean;
   severityThreshold: "low" | "medium" | "high" | "critical";
+  escalationThreshold: number;
 }
 
 type Period = "24h" | "7d" | "30d";
@@ -286,6 +287,7 @@ function SettingsPanel({ siteId }: { siteId: number }) {
   const [responseTimeThreshold, setResponseTimeThreshold] = useState("");
   const [sslExpiryWarningDays, setSslExpiryWarningDays] = useState("");
   const [checkInterval, setCheckInterval] = useState("");
+  const [escalationThreshold, setEscalationThreshold] = useState("");
   const [notifyToggles, setNotifyToggles] = useState<
     Record<string, boolean>
   >({});
@@ -307,6 +309,7 @@ function SettingsPanel({ siteId }: { siteId: number }) {
         );
         setSslExpiryWarningDays(String(siteData.sslExpiryWarningDays));
         setCheckInterval(String(siteData.checkInterval));
+        setEscalationThreshold(String(siteData.escalationThreshold));
         setNotifyToggles({
           notifyDowntime: siteData.notifyDowntime,
           notifySlowResponse: siteData.notifySlowResponse,
@@ -336,6 +339,10 @@ function SettingsPanel({ siteId }: { siteId: number }) {
         responseTimeThreshold.trim() === ""
           ? null
           : Number(responseTimeThreshold),
+      escalationThreshold:
+        escalationThreshold.trim() === ""
+          ? null
+          : Number(escalationThreshold),
     };
 
     try {
@@ -486,6 +493,29 @@ function SettingsPanel({ siteId }: { siteId: number }) {
             />
             <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
               10–86400 seconds
+            </p>
+          </div>
+          <div>
+            <label
+              htmlFor="escalation-threshold"
+              className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300"
+            >
+              escalation threshold (minutes)
+            </label>
+            <input
+              id="escalation-threshold"
+              type="number"
+              min={1}
+              max={1440}
+              value={escalationThreshold}
+              onChange={(e) => {
+                setEscalationThreshold(e.target.value);
+                setMsg(null);
+              }}
+              className={inputClass}
+            />
+            <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+              minutes of continuous downtime before slack messages escalate with @channel
             </p>
           </div>
         </div>
