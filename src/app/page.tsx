@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, type FormEvent } from "react";
+import Link from "next/link";
 
 interface Check {
   id: number;
@@ -244,7 +245,12 @@ export default function Dashboard() {
                         />
                       </td>
                       <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100">
-                        {site.name}
+                        <Link
+                          href={`/site/${site.id}`}
+                          className="hover:underline"
+                        >
+                          {site.name}
+                        </Link>
                         {!site.isActive && (
                           <span className="ml-2 text-xs text-zinc-400">
                             (paused)
