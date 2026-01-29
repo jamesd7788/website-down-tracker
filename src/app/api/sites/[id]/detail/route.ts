@@ -86,6 +86,22 @@ export async function GET(_request: Request, { params }: RouteParams) {
     responseTimeMs: c.responseTimeMs,
   }));
 
+  // recent checks (newest first, limit 50) for log view
+  const recentCheckLogs = await db
+    .select({
+      id: checks.id,
+      statusCode: checks.statusCode,
+      responseTimeMs: checks.responseTimeMs,
+      isUp: checks.isUp,
+      errorMessage: checks.errorMessage,
+      errorCode: checks.errorCode,
+      checkedAt: checks.checkedAt,
+    })
+    .from(checks)
+    .where(and(eq(checks.siteId, id), gte(checks.checkedAt, thirtyDaysAgo)))
+    .orderBy(desc(checks.checkedAt))
+    .limit(50);
+
   // recent anomalies (last 30 days, newest first, limit 50)
   const recentAnomalies = await db
     .select({
@@ -109,5 +125,6 @@ export async function GET(_request: Request, { params }: RouteParams) {
     uptime: { "24h": uptime24h, "7d": uptime7d, "30d": uptime30d },
     timeSeries,
     anomalies: recentAnomalies,
+    recentChecks: recentCheckLogs,
   });
 }

@@ -13,6 +13,39 @@ interface Check {
   checkedAt: string;
 }
 
+interface CheckLogEntry {
+  id: number;
+  statusCode: number | null;
+  responseTimeMs: number | null;
+  isUp: boolean | null;
+  errorMessage: string | null;
+  errorCode: string | null;
+  checkedAt: string;
+}
+
+interface CheckDetailData {
+  id: number;
+  siteId: number;
+  statusCode: number | null;
+  responseTimeMs: number | null;
+  isUp: boolean | null;
+  errorMessage: string | null;
+  errorCode: string | null;
+  headers: Record<string, string | string[] | undefined> | null;
+  sslValid: boolean | null;
+  sslExpiry: string | null;
+  sslCertificate: {
+    issuer?: Record<string, string>;
+    subject?: Record<string, string>;
+    valid_from?: string;
+    valid_to?: string;
+    serialNumber?: string;
+    fingerprint?: string;
+  } | null;
+  bodyHash: string | null;
+  checkedAt: string;
+}
+
 interface Anomaly {
   id: number;
   type: string;
@@ -48,6 +81,7 @@ interface SiteDetail {
   };
   timeSeries: TimePoint[];
   anomalies: Anomaly[];
+  recentChecks: CheckLogEntry[];
 }
 
 interface SiteSettings {
@@ -525,6 +559,268 @@ function SettingsPanel({ siteId }: { siteId: number }) {
   );
 }
 
+function CheckDetailModal({
+  siteId,
+  checkId,
+  onClose,
+}: {
+  siteId: number;
+  checkId: number;
+  onClose: () => void;
+}) {
+  const [detail, setDetail] = useState<CheckDetailData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetch(`/api/sites/${siteId}/checks/${checkId}`)
+      .then((r) => {
+        if (!r.ok) throw new Error("failed to fetch");
+        return r.json();
+      })
+      .then((d: CheckDetailData) => setDetail(d))
+      .catch(() => setError("failed to load check details"))
+      .finally(() => setLoading(false));
+  }, [siteId, checkId]);
+
+  // close on escape
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  const statusColor = detail
+    ? detail.isUp
+      ? "text-emerald-600 dark:text-emerald-400"
+      : "text-red-600 dark:text-red-400"
+    : "text-zinc-500";
+
+  const sectionClass =
+    "rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50";
+  const labelClass =
+    "text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400";
+  const valueClass = "text-sm text-zinc-900 dark:text-zinc-100";
+
+  function formatHeaderValue(val: string | string[] | undefined): string {
+    if (val === undefined) return "";
+    return Array.isArray(val) ? val.join(", ") : val;
+  }
+
+  function formatCertField(obj: Record<string, string> | undefined): string {
+    if (!obj) return "—";
+    return Object.entries(obj)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(", ");
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-[10vh]"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-2xl rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+        {/* header */}
+        <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            check details
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-zinc-400 transition-colors hover:text-zinc-900 dark:hover:text-zinc-100"
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path
+                d="M15 5L5 15M5 5l10 10"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        </div>
+
+        <div className="max-h-[70vh] overflow-y-auto px-6 py-4">
+          {loading && (
+            <div className="py-12 text-center text-sm text-zinc-400">
+              loading...
+            </div>
+          )}
+          {error && (
+            <div className="py-12 text-center text-sm text-red-500">
+              {error}
+            </div>
+          )}
+          {detail && (
+            <div className="space-y-4">
+              {/* status overview */}
+              <div className={sectionClass}>
+                <div className="grid grid-cols-3 gap-4 p-4">
+                  <div>
+                    <p className={labelClass}>status</p>
+                    <p className={`text-lg font-semibold tabular-nums ${statusColor}`}>
+                      {detail.statusCode ?? "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className={labelClass}>response time</p>
+                    <p className={`text-lg font-semibold tabular-nums ${valueClass}`}>
+                      {detail.responseTimeMs != null
+                        ? `${detail.responseTimeMs}ms`
+                        : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className={labelClass}>result</p>
+                    <p className={`text-lg font-semibold ${statusColor}`}>
+                      {detail.isUp === true
+                        ? "up"
+                        : detail.isUp === false
+                          ? "down"
+                          : "unknown"}
+                    </p>
+                  </div>
+                </div>
+                <div className="border-t border-zinc-200 px-4 py-2 dark:border-zinc-800">
+                  <p className="text-xs text-zinc-400">
+                    {new Date(detail.checkedAt).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              {/* error info */}
+              {(detail.errorMessage || detail.errorCode) && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900/50 dark:bg-red-950/30">
+                  <p className="text-xs font-medium uppercase tracking-wider text-red-800 dark:text-red-400">
+                    error
+                  </p>
+                  {detail.errorCode && (
+                    <p className="mt-1 font-mono text-sm text-red-700 dark:text-red-300">
+                      {detail.errorCode}
+                    </p>
+                  )}
+                  {detail.errorMessage && (
+                    <p className="mt-1 text-sm text-red-600 dark:text-red-400">
+                      {detail.errorMessage}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* ssl certificate */}
+              <div className={sectionClass}>
+                <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+                  <p className="text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    SSL certificate
+                  </p>
+                </div>
+                {detail.sslCertificate ? (
+                  <div className="space-y-2 p-4">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`inline-block h-2 w-2 rounded-full ${
+                          detail.sslValid
+                            ? "bg-emerald-500"
+                            : "bg-red-500"
+                        }`}
+                      />
+                      <span className={`text-sm font-medium ${
+                        detail.sslValid
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-red-600 dark:text-red-400"
+                      }`}>
+                        {detail.sslValid ? "valid" : "invalid"}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <p className={labelClass}>issuer</p>
+                        <p className={`${valueClass} break-all`}>
+                          {formatCertField(detail.sslCertificate.issuer)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className={labelClass}>subject</p>
+                        <p className={`${valueClass} break-all`}>
+                          {formatCertField(detail.sslCertificate.subject)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className={labelClass}>valid from</p>
+                        <p className={valueClass}>
+                          {detail.sslCertificate.valid_from ?? "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className={labelClass}>valid to</p>
+                        <p className={valueClass}>
+                          {detail.sslCertificate.valid_to ?? "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className={labelClass}>fingerprint</p>
+                        <p className={`${valueClass} break-all font-mono text-xs`}>
+                          {detail.sslCertificate.fingerprint ?? "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className={labelClass}>serial number</p>
+                        <p className={`${valueClass} break-all font-mono text-xs`}>
+                          {detail.sslCertificate.serialNumber ?? "—"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="px-4 py-4 text-sm text-zinc-400">
+                    SSL certificate data not available
+                  </div>
+                )}
+              </div>
+
+              {/* response headers */}
+              <div className={sectionClass}>
+                <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+                  <p className="text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    response headers
+                  </p>
+                </div>
+                {detail.headers &&
+                Object.keys(detail.headers).length > 0 ? (
+                  <div className="max-h-64 overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/50">
+                        {Object.entries(detail.headers).map(([key, val]) => (
+                          <tr key={key}>
+                            <td className="whitespace-nowrap px-4 py-1.5 font-mono text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                              {key}
+                            </td>
+                            <td className="break-all px-4 py-1.5 font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                              {formatHeaderValue(val)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="px-4 py-4 text-sm text-zinc-400">
+                    header data not available
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const severityColors: Record<string, string> = {
   critical:
     "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
@@ -545,6 +841,7 @@ export default function SiteDetailPage({
   const [error, setError] = useState("");
   const [period, setPeriod] = useState<Period>("24h");
   const [tab, setTab] = useState<Tab>("overview");
+  const [selectedCheckId, setSelectedCheckId] = useState<number | null>(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- recompute timestamp when data refreshes
   const now = useMemo(() => Date.now(), [data]);
 
@@ -594,7 +891,7 @@ export default function SiteDetailPage({
     );
   }
 
-  const { site, latestCheck, responseTime, uptime, timeSeries, anomalies } =
+  const { site, latestCheck, responseTime, uptime, timeSeries, anomalies, recentChecks } =
     data;
   const isUp = latestCheck?.isUp;
 
@@ -736,6 +1033,67 @@ export default function SiteDetailPage({
           <ResponseChart data={timeSeries} period={period} now={now} />
         </div>
 
+        {/* check log */}
+        <div className="mb-6 rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+            <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+              check log
+            </h2>
+          </div>
+          {recentChecks.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-zinc-400">
+              no checks recorded yet
+            </div>
+          ) : (
+            <div className="divide-y divide-zinc-100 dark:divide-zinc-800/50">
+              {recentChecks.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setSelectedCheckId(c.id)}
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                >
+                  <span
+                    className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+                      c.isUp === true
+                        ? "bg-emerald-500"
+                        : c.isUp === false
+                          ? "bg-red-500"
+                          : "bg-zinc-400"
+                    }`}
+                  />
+                  <span className="w-12 shrink-0 font-mono text-xs tabular-nums text-zinc-900 dark:text-zinc-100">
+                    {c.statusCode ?? "—"}
+                  </span>
+                  <span className="w-16 shrink-0 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+                    {c.responseTimeMs != null ? `${c.responseTimeMs}ms` : "—"}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs text-zinc-400 dark:text-zinc-500">
+                    {c.errorMessage || c.errorCode || ""}
+                  </span>
+                  <span className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">
+                    {new Date(c.checkedAt).toLocaleString()}
+                  </span>
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    className="shrink-0 text-zinc-300 dark:text-zinc-600"
+                  >
+                    <path
+                      d="M6 4l4 4-4 4"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* anomalies */}
         <div className="rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
           <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
@@ -782,6 +1140,14 @@ export default function SiteDetailPage({
         </>
         )}
       </main>
+
+      {selectedCheckId != null && (
+        <CheckDetailModal
+          siteId={site.id}
+          checkId={selectedCheckId}
+          onClose={() => setSelectedCheckId(null)}
+        />
+      )}
     </div>
   );
 }
