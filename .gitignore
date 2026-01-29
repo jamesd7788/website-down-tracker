@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# sqlite
+*.db
+*.db-journal
+
+# ralph-tui
+.ralph-tui/
+tasks/
