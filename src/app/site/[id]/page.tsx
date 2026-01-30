@@ -13,16 +13,6 @@ interface Check {
   checkedAt: string;
 }
 
-interface CheckLogEntry {
-  id: number;
-  statusCode: number | null;
-  responseTimeMs: number | null;
-  isUp: boolean | null;
-  errorMessage: string | null;
-  errorCode: string | null;
-  checkedAt: string;
-}
-
 interface CheckDetailData {
   id: number;
   siteId: number;
@@ -49,6 +39,7 @@ interface CheckDetailData {
 
 interface Anomaly {
   id: number;
+  checkId: number;
   type: string;
   description: string | null;
   severity: string;
@@ -82,7 +73,6 @@ interface SiteDetail {
   };
   timeSeries: TimePoint[];
   anomalies: Anomaly[];
-  recentChecks: CheckLogEntry[];
 }
 
 interface SiteSettings {
@@ -113,17 +103,122 @@ function ResponseChart({
   period: Period;
   now: number;
 }) {
-  const cutoffs: Record<Period, number> = {
-    "24h": now - 24 * 60 * 60 * 1000,
-    "7d": now - 7 * 24 * 60 * 60 * 1000,
-    "30d": now - 30 * 24 * 60 * 60 * 1000,
-  };
+  const [hover, setHover] = useState<{ x: number; y: number; val: number; time: string } | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
 
-  const filtered = data.filter(
-    (d) => new Date(d.time).getTime() >= cutoffs[period] && d.responseTimeMs != null
-  );
+  const chartData = useMemo(() => {
+    const cutoffs: Record<Period, number> = {
+      "24h": now - 24 * 60 * 60 * 1000,
+      "7d": now - 7 * 24 * 60 * 60 * 1000,
+      "30d": now - 30 * 24 * 60 * 60 * 1000,
+    };
 
-  if (filtered.length < 2) {
+    const allInPeriod = data.filter(
+      (d) => new Date(d.time).getTime() >= cutoffs[period]
+    );
+    const filtered = allInPeriod.filter((d) => d.responseTimeMs != null);
+
+    if (filtered.length < 2) return null;
+
+    let maxVal = -Infinity;
+    for (const d of filtered) {
+      const v = d.responseTimeMs!;
+      if (v > maxVal) maxVal = v;
+    }
+    const yMin = 0;
+    const yMax = maxVal;
+    const range = yMax - yMin || 1;
+
+    const w = 800;
+    const h = 192;
+    const padX = 0;
+    const padTop = 12;
+    const padBot = 24;
+    const chartH = h - padTop - padBot;
+    const chartW = w - padX * 2;
+
+    const tMin = new Date(filtered[0].time).getTime();
+    const tMax = new Date(filtered[filtered.length - 1].time).getTime();
+    const tRange = tMax - tMin || 1;
+
+    const points = filtered.map((d) => {
+      const t = new Date(d.time).getTime();
+      const x = padX + ((t - tMin) / tRange) * chartW;
+      const y = padTop + chartH - ((d.responseTimeMs! - yMin) / range) * chartH;
+      return { x, y, val: d.responseTimeMs!, time: d.time };
+    });
+
+    // downtime regions: spans where responseTimeMs is null
+    const downtimeRegions: { x1: number; x2: number }[] = [];
+    for (let i = 0; i < allInPeriod.length; i++) {
+      if (allInPeriod[i].responseTimeMs == null) {
+        const startT = new Date(allInPeriod[i].time).getTime();
+        let endT = startT;
+        while (i + 1 < allInPeriod.length && allInPeriod[i + 1].responseTimeMs == null) {
+          i++;
+          endT = new Date(allInPeriod[i].time).getTime();
+        }
+        if (endT >= tMin && startT <= tMax) {
+          const x1 = padX + (Math.max(startT, tMin) - tMin) / tRange * chartW;
+          const x2 = padX + (Math.min(endT, tMax) - tMin) / tRange * chartW;
+          downtimeRegions.push({ x1, x2: Math.max(x2, x1 + 2) });
+        }
+      }
+    }
+
+    // split points into segments at downtime gaps
+    const segments: typeof points[] = [];
+    let currentSeg: typeof points = [];
+    for (let i = 0; i < points.length; i++) {
+      if (currentSeg.length === 0) {
+        currentSeg.push(points[i]);
+      } else {
+        const hasGap = downtimeRegions.some((r) => {
+          const rMid = (r.x1 + r.x2) / 2;
+          return rMid > currentSeg[currentSeg.length - 1].x && rMid < points[i].x;
+        });
+        if (hasGap) {
+          if (currentSeg.length >= 1) segments.push(currentSeg);
+          currentSeg = [points[i]];
+        } else {
+          currentSeg.push(points[i]);
+        }
+      }
+    }
+    if (currentSeg.length >= 1) segments.push(currentSeg);
+
+    const linePaths = segments
+      .filter((seg) => seg.length >= 2)
+      .map((seg) => seg.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" "));
+
+    const areaPaths = segments
+      .filter((seg) => seg.length >= 2)
+      .map((seg) => {
+        const line = seg.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
+        return `${line} L${seg[seg.length - 1].x},${h - padBot} L${seg[0].x},${h - padBot} Z`;
+      });
+
+    const yLabels = [yMin, yMin + range / 2, yMax].map((val) => ({
+      val: Math.round(val),
+      y: padTop + chartH - ((val - yMin) / range) * chartH,
+    }));
+
+    const xLabelCount = 5;
+    const xLabels = Array.from({ length: xLabelCount }, (_, i) => {
+      const t = tMin + (i / (xLabelCount - 1)) * tRange;
+      const x = padX + ((t - tMin) / tRange) * chartW;
+      const d = new Date(t);
+      const label =
+        period === "24h"
+          ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+          : d.toLocaleDateString([], { month: "short", day: "numeric" });
+      return { x, label };
+    });
+
+    return { w, h, padX, padTop, padBot, chartH, points, downtimeRegions, linePaths, areaPaths, yLabels, xLabels };
+  }, [data, period, now]);
+
+  if (!chartData) {
     return (
       <div className="flex h-48 items-center justify-center text-sm text-zinc-400">
         not enough data for selected period
@@ -131,100 +226,147 @@ function ResponseChart({
     );
   }
 
-  const times = filtered.map((d) => d.responseTimeMs!);
-  const maxVal = Math.max(...times);
-  const minVal = Math.min(...times);
-  const range = maxVal - minVal || 1;
+  const { w, h, padX, padTop, padBot, chartH, points, downtimeRegions, linePaths, areaPaths, yLabels, xLabels } = chartData;
 
-  const w = 800;
-  const h = 192;
-  const padX = 0;
-  const padTop = 12;
-  const padBot = 24;
-  const chartH = h - padTop - padBot;
-  const chartW = w - padX * 2;
-
-  const points = filtered.map((d, i) => {
-    const x = padX + (i / (filtered.length - 1)) * chartW;
-    const y = padTop + chartH - ((d.responseTimeMs! - minVal) / range) * chartH;
-    return { x, y, val: d.responseTimeMs!, time: d.time };
-  });
-
-  const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
-  const areaPath = `${linePath} L${points[points.length - 1].x},${h - padBot} L${points[0].x},${h - padBot} Z`;
-
-  // y-axis labels
-  const yLabels = [minVal, minVal + range / 2, maxVal].map((val) => ({
-    val: Math.round(val),
-    y: padTop + chartH - ((val - minVal) / range) * chartH,
-  }));
-
-  // x-axis labels
-  const xLabelCount = 5;
-  const xLabels = Array.from({ length: xLabelCount }, (_, i) => {
-    const idx = Math.round((i / (xLabelCount - 1)) * (filtered.length - 1));
-    const d = new Date(filtered[idx].time);
-    const label =
-      period === "24h"
-        ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-        : d.toLocaleDateString([], { month: "short", day: "numeric" });
-    return { x: points[idx].x, label };
-  });
+  function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+    const svg = svgRef.current;
+    if (!svg || points.length === 0) return;
+    const rect = svg.getBoundingClientRect();
+    const mouseX = ((e.clientX - rect.left) / rect.width) * w;
+    // find nearest point
+    let closest = points[0];
+    let closestDist = Math.abs(mouseX - points[0].x);
+    for (let i = 1; i < points.length; i++) {
+      const dist = Math.abs(mouseX - points[i].x);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closest = points[i];
+      }
+    }
+    setHover(closest);
+  }
 
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full" preserveAspectRatio="none">
-      {/* grid lines */}
-      {yLabels.map((yl) => (
-        <line
-          key={yl.val}
-          x1={padX}
-          x2={w - padX}
-          y1={yl.y}
-          y2={yl.y}
-          className="stroke-zinc-200 dark:stroke-zinc-800"
-          strokeWidth={0.5}
-        />
-      ))}
+    <div className="relative">
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${w} ${h}`}
+        className="w-full"
+        preserveAspectRatio="xMidYMid meet"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => setHover(null)}
+      >
+        {/* grid lines */}
+        {yLabels.map((yl, i) => (
+          <line
+            key={i}
+            x1={padX}
+            x2={w - padX}
+            y1={yl.y}
+            y2={yl.y}
+            className="stroke-zinc-200 dark:stroke-zinc-800"
+            strokeWidth={0.5}
+          />
+        ))}
 
-      {/* area fill */}
-      <path d={areaPath} className="fill-emerald-500/10 dark:fill-emerald-400/10" />
+        {/* downtime regions */}
+        {downtimeRegions.map((r, i) => (
+          <rect
+            key={`dt-${i}`}
+            x={r.x1}
+            y={padTop}
+            width={r.x2 - r.x1}
+            height={chartH}
+            className="fill-red-500/10 dark:fill-red-400/10"
+          />
+        ))}
 
-      {/* line */}
-      <path
-        d={linePath}
-        fill="none"
-        className="stroke-emerald-500 dark:stroke-emerald-400"
-        strokeWidth={1.5}
-        vectorEffect="non-scaling-stroke"
-      />
+        {/* area fills (per segment) */}
+        {areaPaths.map((d, i) => (
+          <path key={`area-${i}`} d={d} className="fill-emerald-500/10 dark:fill-emerald-400/10" />
+        ))}
 
-      {/* y labels */}
-      {yLabels.map((yl) => (
-        <text
-          key={yl.val}
-          x={padX + 4}
-          y={yl.y - 4}
-          className="fill-zinc-400 dark:fill-zinc-500"
-          fontSize={10}
+        {/* lines (per segment) */}
+        {linePaths.map((d, i) => (
+          <path
+            key={`line-${i}`}
+            d={d}
+            fill="none"
+            className="stroke-emerald-500 dark:stroke-emerald-400"
+            strokeWidth={1.5}
+
+          />
+        ))}
+
+        {/* hover crosshair + dot */}
+        {hover && (
+          <>
+            <line
+              x1={hover.x}
+              x2={hover.x}
+              y1={padTop}
+              y2={h - padBot}
+              className="stroke-zinc-400 dark:stroke-zinc-500"
+              strokeWidth={0.5}
+              strokeDasharray="4 2"
+  
+            />
+            <circle
+              cx={hover.x}
+              cy={hover.y}
+              r={3}
+              className="fill-emerald-500 dark:fill-emerald-400"
+  
+            />
+          </>
+        )}
+
+        {/* y labels */}
+        {yLabels.map((yl, i) => (
+          <text
+            key={i}
+            x={padX + 4}
+            y={yl.y - 4}
+            className="fill-zinc-400 dark:fill-zinc-500"
+            fontSize={10}
+          >
+            {yl.val}ms
+          </text>
+        ))}
+
+        {/* x labels */}
+        {xLabels.map((xl, i) => (
+          <text
+            key={i}
+            x={xl.x}
+            y={h - 4}
+            textAnchor="middle"
+            className="fill-zinc-400 dark:fill-zinc-500"
+            fontSize={10}
+          >
+            {xl.label}
+          </text>
+        ))}
+      </svg>
+
+      {/* tooltip */}
+      {hover && (
+        <div
+          className="pointer-events-none absolute top-0 z-10 rounded border border-zinc-200 bg-white px-2 py-1 text-xs shadow dark:border-zinc-700 dark:bg-zinc-800"
+          style={{
+            left: `${(hover.x / w) * 100}%`,
+            transform: hover.x > w / 2 ? "translateX(-110%)" : "translateX(10%)",
+          }}
         >
-          {yl.val}ms
-        </text>
-      ))}
-
-      {/* x labels */}
-      {xLabels.map((xl) => (
-        <text
-          key={xl.x}
-          x={xl.x}
-          y={h - 4}
-          textAnchor="middle"
-          className="fill-zinc-400 dark:fill-zinc-500"
-          fontSize={10}
-        >
-          {xl.label}
-        </text>
-      ))}
-    </svg>
+          <p className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+            {hover.val}ms
+          </p>
+          <p className="text-zinc-500 dark:text-zinc-400">
+            {new Date(hover.time).toLocaleString()}
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1092,6 +1234,32 @@ export default function SiteDetailPage({
     undoToastRef.current = null;
   }
 
+  // compute response time stats scoped to the selected period
+  // must be above early returns to satisfy rules of hooks
+  const periodStats = useMemo(() => {
+    const ts = data?.timeSeries;
+    if (!ts || ts.length === 0) return { avg: null, p50: null, p95: null, p99: null };
+    const cutoff = now - (
+      period === "24h" ? 24 * 60 * 60 * 1000 :
+      period === "7d" ? 7 * 24 * 60 * 60 * 1000 :
+      30 * 24 * 60 * 60 * 1000
+    );
+    const vals = ts
+      .filter((d) => new Date(d.time).getTime() >= cutoff && d.responseTimeMs != null)
+      .map((d) => d.responseTimeMs!)
+      .sort((a, b) => a - b);
+    if (vals.length === 0) return { avg: null, p50: null, p95: null, p99: null };
+    const avg = Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+    const pct = (p: number) => {
+      const idx = (p / 100) * (vals.length - 1);
+      const lo = Math.floor(idx);
+      const hi = Math.ceil(idx);
+      if (lo === hi) return vals[lo];
+      return vals[lo] + (vals[hi] - vals[lo]) * (idx - lo);
+    };
+    return { avg, p50: pct(50), p95: pct(95), p99: pct(99) };
+  }, [data, period, now]);
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-zinc-950">
@@ -1118,7 +1286,7 @@ export default function SiteDetailPage({
     );
   }
 
-  const { site, latestCheck, responseTime, uptime, timeSeries, anomalies, recentChecks } =
+  const { site, latestCheck, uptime, timeSeries, anomalies } =
     data;
   const isUp = latestCheck?.isUp;
 
@@ -1213,13 +1381,13 @@ export default function SiteDetailPage({
           ))}
         </div>
 
-        {/* response time stats */}
+        {/* response time stats (scoped to selected period) */}
         <div className="mb-6 grid grid-cols-4 gap-4">
           {[
-            { label: "avg", value: responseTime.avg },
-            { label: "p50", value: responseTime.p50 },
-            { label: "p95", value: responseTime.p95 },
-            { label: "p99", value: responseTime.p99 },
+            { label: "avg", value: periodStats.avg },
+            { label: "p50", value: periodStats.p50 },
+            { label: "p95", value: periodStats.p95 },
+            { label: "p99", value: periodStats.p99 },
           ].map(({ label, value }) => (
             <div
               key={label}
@@ -1260,72 +1428,11 @@ export default function SiteDetailPage({
           <ResponseChart data={timeSeries} period={period} now={now} />
         </div>
 
-        {/* check log */}
-        <div className="mb-6 rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-            <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-              check log
-            </h2>
-          </div>
-          {recentChecks.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-zinc-400">
-              no checks recorded yet
-            </div>
-          ) : (
-            <div className="divide-y divide-zinc-100 dark:divide-zinc-800/50">
-              {recentChecks.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => setSelectedCheckId(c.id)}
-                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
-                >
-                  <span
-                    className={`inline-block h-2 w-2 shrink-0 rounded-full ${
-                      c.isUp === true
-                        ? "bg-emerald-500"
-                        : c.isUp === false
-                          ? "bg-red-500"
-                          : "bg-zinc-400"
-                    }`}
-                  />
-                  <span className="w-12 shrink-0 font-mono text-xs tabular-nums text-zinc-900 dark:text-zinc-100">
-                    {c.statusCode ?? "—"}
-                  </span>
-                  <span className="w-16 shrink-0 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
-                    {c.responseTimeMs != null ? `${c.responseTimeMs}ms` : "—"}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-xs text-zinc-400 dark:text-zinc-500">
-                    {c.errorMessage || c.errorCode || ""}
-                  </span>
-                  <span className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">
-                    {new Date(c.checkedAt).toLocaleString()}
-                  </span>
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    className="shrink-0 text-zinc-300 dark:text-zinc-600"
-                  >
-                    <path
-                      d="M6 4l4 4-4 4"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* anomalies */}
+        {/* anomalies — the event log */}
         <div className="rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
           <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
             <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-              recent anomalies
+              event log
             </h2>
           </div>
           {anomalies.length === 0 ? (
@@ -1335,9 +1442,10 @@ export default function SiteDetailPage({
           ) : (
             <div className="divide-y divide-zinc-100 dark:divide-zinc-800/50">
               {anomalies.map((a) => (
-                <div
+                <button
                   key={a.id}
-                  className="flex items-start gap-3 px-4 py-3"
+                  onClick={() => setSelectedCheckId(a.checkId)}
+                  className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
                 >
                   <span
                     className={`mt-0.5 inline-flex shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -1362,11 +1470,12 @@ export default function SiteDetailPage({
                     </span>
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setSuppressingAnomalyId(
                           suppressingAnomalyId === a.id ? null : a.id
-                        )
-                      }
+                        );
+                      }}
                       className="rounded px-1.5 py-0.5 text-xs text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
                       title="Don't notify this type"
                     >
@@ -1381,14 +1490,20 @@ export default function SiteDetailPage({
                         </p>
                         <button
                           type="button"
-                          onClick={() => handleSuppress(a.type, "site")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSuppress(a.type, "site");
+                          }}
                           className="w-full px-3 py-1.5 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
                         >
                           for this site only
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleSuppress(a.type, "global")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSuppress(a.type, "global");
+                          }}
                           className="w-full px-3 py-1.5 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
                         >
                           for all sites
@@ -1396,7 +1511,22 @@ export default function SiteDetailPage({
                       </div>
                     )}
                   </div>
-                </div>
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    className="mt-0.5 shrink-0 text-zinc-300 dark:text-zinc-600"
+                  >
+                    <path
+                      d="M6 4l4 4-4 4"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
               ))}
             </div>
           )}

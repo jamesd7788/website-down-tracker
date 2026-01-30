@@ -2,8 +2,8 @@ import * as https from "node:https";
 import * as http from "node:http";
 import * as crypto from "node:crypto";
 import { db } from "@/db";
-import { sites, checks } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { sites, checks, siteSettings } from "@/db/schema";
+import { eq, desc } from "drizzle-orm";
 import { detectAnomalies } from "@/lib/anomaly-detector";
 
 const CHECK_TIMEOUT_MS = 10_000;
@@ -274,6 +274,9 @@ async function performCheck(
   };
 }
 
+const DEFAULT_CHECK_INTERVAL_S = 60;
+const TICK_INTERVAL_MS = 30_000; // tick every 30s to check which sites are due
+
 export async function runChecks(): Promise<number> {
   const activeSites = await db
     .select()
@@ -282,8 +285,34 @@ export async function runChecks(): Promise<number> {
 
   if (activeSites.length === 0) return 0;
 
-  const results = await Promise.allSettled(
+  const now = Date.now();
+  let checked = 0;
+
+  await Promise.allSettled(
     activeSites.map(async (site) => {
+      // get per-site check interval
+      const [settings] = await db
+        .select({ checkInterval: siteSettings.checkInterval })
+        .from(siteSettings)
+        .where(eq(siteSettings.siteId, site.id))
+        .limit(1);
+
+      const intervalS = settings?.checkInterval ?? DEFAULT_CHECK_INTERVAL_S;
+      const intervalMs = intervalS * 1000;
+
+      // get last check time for this site
+      const [lastCheck] = await db
+        .select({ checkedAt: checks.checkedAt })
+        .from(checks)
+        .where(eq(checks.siteId, site.id))
+        .orderBy(desc(checks.checkedAt))
+        .limit(1);
+
+      if (lastCheck) {
+        const elapsed = now - lastCheck.checkedAt.getTime();
+        if (elapsed < intervalMs) return null; // not due yet
+      }
+
       const result = await performCheck(site.url);
       const [inserted] = await db
         .insert(checks)
@@ -294,23 +323,23 @@ export async function runChecks(): Promise<number> {
         .returning({ id: checks.id });
 
       await detectAnomalies(inserted.id, site.id);
+      checked++;
 
       return result;
     })
   );
 
-  return results.length;
+  return checked;
 }
 
-const CHECK_INTERVAL_MS = 60_000;
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
 export function startCheckEngine(): void {
   if (intervalId !== null) return; // already running
 
-  console.log("[check-engine] starting, interval=60s");
+  console.log("[check-engine] starting, tick=30s");
 
-  // run immediately on start, then every 60s
+  // run immediately on start, then tick every 30s
   runChecks().catch((err) =>
     console.error("[check-engine] initial run failed:", err)
   );
@@ -319,7 +348,7 @@ export function startCheckEngine(): void {
     runChecks().catch((err) =>
       console.error("[check-engine] check run failed:", err)
     );
-  }, CHECK_INTERVAL_MS);
+  }, TICK_INTERVAL_MS);
 }
 
 export function stopCheckEngine(): void {
