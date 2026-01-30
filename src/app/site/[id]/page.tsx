@@ -44,6 +44,8 @@ interface Anomaly {
   description: string | null;
   severity: string;
   createdAt: string;
+  responseTimeMs: number | null;
+  statusCode: number | null;
 }
 
 interface TimePoint {
@@ -1113,6 +1115,24 @@ const severityColors: Record<string, string> = {
   low: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
 };
 
+const anomalyTypeLabels: Record<string, string> = {
+  downtime: "down",
+  slow_response: "slow",
+  status_code: "4xx",
+  content_change: "content",
+  ssl_issue: "ssl",
+  header_anomaly: "header",
+};
+
+const anomalyTypeColors: Record<string, string> = {
+  downtime: "bg-red-600 text-white dark:bg-red-500",
+  slow_response: "bg-amber-500 text-white dark:bg-amber-400 dark:text-amber-950",
+  status_code: "bg-orange-500 text-white dark:bg-orange-400 dark:text-orange-950",
+  content_change: "bg-violet-500 text-white dark:bg-violet-400 dark:text-violet-950",
+  ssl_issue: "bg-rose-500 text-white dark:bg-rose-400 dark:text-rose-950",
+  header_anomaly: "bg-sky-500 text-white dark:bg-sky-400 dark:text-sky-950",
+};
+
 export default function SiteDetailPage({
   params: paramsPromise,
 }: {
@@ -1454,10 +1474,29 @@ export default function SiteDetailPage({
                   >
                     {a.severity}
                   </span>
+                  <span
+                    className={`mt-0.5 inline-flex shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                      anomalyTypeColors[a.type] ?? "bg-zinc-500 text-white"
+                    }`}
+                  >
+                    {anomalyTypeLabels[a.type] ?? a.type}
+                  </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                      {a.type.replace(/_/g, " ")}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                        {a.type.replace(/_/g, " ")}
+                      </p>
+                      <span className="flex items-center gap-2 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+                        {a.statusCode != null && (
+                          <span className={a.statusCode >= 500 ? "font-semibold text-red-600 dark:text-red-400" : a.statusCode >= 400 ? "font-semibold text-orange-600 dark:text-orange-400" : ""}>
+                            {a.statusCode}
+                          </span>
+                        )}
+                        {a.responseTimeMs != null && (
+                          <span>{a.responseTimeMs}ms</span>
+                        )}
+                      </span>
+                    </div>
                     {a.description && (
                       <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">
                         {a.description}
@@ -1465,7 +1504,7 @@ export default function SiteDetailPage({
                     )}
                   </div>
                   <div className="relative shrink-0 flex items-center gap-2">
-                    <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                    <span className="hidden text-xs text-zinc-400 sm:inline dark:text-zinc-500">
                       {new Date(a.createdAt).toLocaleString()}
                     </span>
                     <button

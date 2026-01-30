@@ -87,6 +87,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
   }));
 
   // recent anomalies (last 30 days, newest first, limit 50) — includes checkId for detail drill-down
+  // join checks to surface responseTimeMs and statusCode for inline diagnostics
   const recentAnomalies = await db
     .select({
       id: anomalies.id,
@@ -95,8 +96,11 @@ export async function GET(_request: Request, { params }: RouteParams) {
       description: anomalies.description,
       severity: anomalies.severity,
       createdAt: anomalies.createdAt,
+      responseTimeMs: checks.responseTimeMs,
+      statusCode: checks.statusCode,
     })
     .from(anomalies)
+    .innerJoin(checks, eq(anomalies.checkId, checks.id))
     .where(
       and(eq(anomalies.siteId, id), gte(anomalies.createdAt, thirtyDaysAgo))
     )
