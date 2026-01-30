@@ -1445,7 +1445,7 @@ export default function SiteDetailPage({
                 <button
                   key={a.id}
                   onClick={() => setSelectedCheckId(a.checkId)}
-                  className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                  className="flex w-full cursor-pointer items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
                 >
                   <span
                     className={`mt-0.5 inline-flex shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
