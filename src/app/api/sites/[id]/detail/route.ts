@@ -84,6 +84,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
   const timeSeries = recentChecks.map((c) => ({
     time: c.checkedAt,
     responseTimeMs: c.responseTimeMs,
+    isUp: c.isUp,
   }));
 
   // recent anomalies (last 30 days, newest first, limit 50) — includes checkId for detail drill-down

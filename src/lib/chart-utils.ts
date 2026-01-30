@@ -5,6 +5,7 @@
 export interface TimePoint {
   time: string;
   responseTimeMs: number | null;
+  isUp?: boolean | null;
 }
 
 export type Period = "24h" | "7d" | "30d";

@@ -51,6 +51,7 @@ interface Anomaly {
 interface TimePoint {
   time: string;
   responseTimeMs: number | null;
+  isUp?: boolean | null;
 }
 
 interface SiteDetail {
@@ -118,7 +119,8 @@ function ResponseChart({
     const allInPeriod = data.filter(
       (d) => new Date(d.time).getTime() >= cutoffs[period]
     );
-    const filtered = allInPeriod.filter((d) => d.responseTimeMs != null);
+    // only plot points that are UP and have a response time — down checks destroy the y-scale
+    const filtered = allInPeriod.filter((d) => d.responseTimeMs != null && d.isUp !== false);
 
     if (filtered.length < 2) return null;
 
@@ -139,8 +141,9 @@ function ResponseChart({
     const chartH = h - padTop - padBot;
     const chartW = w - padX * 2;
 
-    const tMin = new Date(filtered[0].time).getTime();
-    const tMax = new Date(filtered[filtered.length - 1].time).getTime();
+    // anchor axis to the full selected period, not just the data extent
+    const tMin = cutoffs[period];
+    const tMax = now;
     const tRange = tMax - tMin || 1;
 
     const points = filtered.map((d) => {
@@ -150,20 +153,13 @@ function ResponseChart({
       return { x, y, val: d.responseTimeMs!, time: d.time };
     });
 
-    // downtime regions: spans where responseTimeMs is null
-    const downtimeRegions: { x1: number; x2: number }[] = [];
-    for (let i = 0; i < allInPeriod.length; i++) {
-      if (allInPeriod[i].responseTimeMs == null) {
-        const startT = new Date(allInPeriod[i].time).getTime();
-        let endT = startT;
-        while (i + 1 < allInPeriod.length && allInPeriod[i + 1].responseTimeMs == null) {
-          i++;
-          endT = new Date(allInPeriod[i].time).getTime();
-        }
-        if (endT >= tMin && startT <= tMax) {
-          const x1 = padX + (Math.max(startT, tMin) - tMin) / tRange * chartW;
-          const x2 = padX + (Math.min(endT, tMax) - tMin) / tRange * chartW;
-          downtimeRegions.push({ x1, x2: Math.max(x2, x1 + 2) });
+    // downtime markers: vertical red lines for checks where isUp === false or responseTimeMs is null
+    const downtimeMarkers: number[] = [];
+    for (const d of allInPeriod) {
+      if (d.isUp === false || d.responseTimeMs == null) {
+        const t = new Date(d.time).getTime();
+        if (t >= tMin && t <= tMax) {
+          downtimeMarkers.push(padX + ((t - tMin) / tRange) * chartW);
         }
       }
     }
@@ -175,10 +171,10 @@ function ResponseChart({
       if (currentSeg.length === 0) {
         currentSeg.push(points[i]);
       } else {
-        const hasGap = downtimeRegions.some((r) => {
-          const rMid = (r.x1 + r.x2) / 2;
-          return rMid > currentSeg[currentSeg.length - 1].x && rMid < points[i].x;
-        });
+        // check if there's a downtime marker between consecutive points
+        const prevX = currentSeg[currentSeg.length - 1].x;
+        const curX = points[i].x;
+        const hasGap = downtimeMarkers.some((mx) => mx > prevX && mx < curX);
         if (hasGap) {
           if (currentSeg.length >= 1) segments.push(currentSeg);
           currentSeg = [points[i]];
@@ -217,7 +213,7 @@ function ResponseChart({
       return { x, label };
     });
 
-    return { w, h, padX, padTop, padBot, chartH, points, downtimeRegions, linePaths, areaPaths, yLabels, xLabels };
+    return { w, h, padX, padTop, padBot, chartH, points, downtimeMarkers, linePaths, areaPaths, yLabels, xLabels };
   }, [data, period, now]);
 
   if (!chartData) {
@@ -228,7 +224,7 @@ function ResponseChart({
     );
   }
 
-  const { w, h, padX, padTop, padBot, chartH, points, downtimeRegions, linePaths, areaPaths, yLabels, xLabels } = chartData;
+  const { w, h, padX, padTop, padBot, chartH, points, downtimeMarkers, linePaths, areaPaths, yLabels, xLabels } = chartData;
 
   function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
     const svg = svgRef.current;
@@ -271,15 +267,16 @@ function ResponseChart({
           />
         ))}
 
-        {/* downtime regions */}
-        {downtimeRegions.map((r, i) => (
-          <rect
+        {/* downtime markers — vertical red lines */}
+        {downtimeMarkers.map((x, i) => (
+          <line
             key={`dt-${i}`}
-            x={r.x1}
-            y={padTop}
-            width={r.x2 - r.x1}
-            height={chartH}
-            className="fill-red-500/10 dark:fill-red-400/10"
+            x1={x}
+            x2={x}
+            y1={padTop}
+            y2={padTop + chartH}
+            className="stroke-red-500/40 dark:stroke-red-400/40"
+            strokeWidth={1}
           />
         ))}
 
@@ -1115,24 +1112,6 @@ const severityColors: Record<string, string> = {
   low: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
 };
 
-const anomalyTypeLabels: Record<string, string> = {
-  downtime: "down",
-  slow_response: "slow",
-  status_code: "4xx",
-  content_change: "content",
-  ssl_issue: "ssl",
-  header_anomaly: "header",
-};
-
-const anomalyTypeColors: Record<string, string> = {
-  downtime: "bg-red-600 text-white dark:bg-red-500",
-  slow_response: "bg-amber-500 text-white dark:bg-amber-400 dark:text-amber-950",
-  status_code: "bg-orange-500 text-white dark:bg-orange-400 dark:text-orange-950",
-  content_change: "bg-violet-500 text-white dark:bg-violet-400 dark:text-violet-950",
-  ssl_issue: "bg-rose-500 text-white dark:bg-rose-400 dark:text-rose-950",
-  header_anomaly: "bg-sky-500 text-white dark:bg-sky-400 dark:text-sky-950",
-};
-
 export default function SiteDetailPage({
   params: paramsPromise,
 }: {
@@ -1462,9 +1441,12 @@ export default function SiteDetailPage({
           ) : (
             <div className="divide-y divide-zinc-100 dark:divide-zinc-800/50">
               {anomalies.map((a) => (
-                <button
+                <div
                   key={a.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setSelectedCheckId(a.checkId)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedCheckId(a.checkId); } }}
                   className="flex w-full cursor-pointer items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
                 >
                   <span
@@ -1473,13 +1455,6 @@ export default function SiteDetailPage({
                     }`}
                   >
                     {a.severity}
-                  </span>
-                  <span
-                    className={`mt-0.5 inline-flex shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                      anomalyTypeColors[a.type] ?? "bg-zinc-500 text-white"
-                    }`}
-                  >
-                    {anomalyTypeLabels[a.type] ?? a.type}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
@@ -1565,7 +1540,7 @@ export default function SiteDetailPage({
                       strokeLinejoin="round"
                     />
                   </svg>
-                </button>
+                </div>
               ))}
             </div>
           )}
